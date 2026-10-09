@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body>
+<title>Pantau Api</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: satu kolom sempit seperti panel instrumen; layar kamera di atas, bacaan sensor di bawah. */
+:root{
+  --ink:#0d1117;        /* latar */
+  --panel:#151b23;      /* panel */
+  --line:#263040;       /* garis */
+  --text:#e9e5dc;       /* teks */
+  --mute:#8d97a6;       /* teks redup */
+  --ember:#ff8a3d;      /* aksen: api */
+  --safe:#5fd0b5;       /* status aman */
+  --alarm:#ff4d4d;      /* status bahaya */
+  --display:"Bricolage Grotesque",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{background:var(--ink);color:var(--text)}
+body{margin:0;padding-inline:16px;padding-block:20px 40px;font:15px/1.5 system-ui,sans-serif}
+main{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+header{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+h1{font:700 2rem/1 var(--display);margin:0;letter-spacing:-.02em;text-wrap:balance}
+h1 span{color:var(--ember)}
+.sub{margin:6px 0 0;color:var(--mute);font-size:.9rem;max-width:46ch}
+.chip{font:500 .75rem var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:6px 12px;border:1px solid var(--line);border-radius:99px;color:var(--mute);white-space:nowrap}
+.chip.safe{color:var(--safe);border-color:var(--safe)}
+.chip.alarm{color:#fff;background:var(--alarm);border-color:var(--alarm);animation:blink .7s steps(2) infinite}
+@keyframes blink{50%{opacity:.55}}
+.stage{position:relative;aspect-ratio:4/3;max-width:100%;background:#05070a;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.stage.alarm{border-color:var(--alarm);box-shadow:0 0 0 2px var(--alarm)}
+.stage video,.stage canvas,.stage img{position:absolute;inset:0;width:100%;height:100%}
+.stage video,.stage img{object-fit:contain}
+.empty{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:24px;color:var(--mute);font-size:.9rem}
+.empty b{display:block;color:var(--text);font:700 1.1rem var(--display);margin-bottom:4px}
+.row{display:flex;flex-wrap:wrap;gap:8px}
+button,label.btn{font:500 .85rem var(--mono);color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:10px 14px;cursor:pointer;min-height:44px;display:inline-flex;align-items:center}
+button:hover,label.btn:hover{border-color:var(--ember)}
+button.primary{background:var(--ember);border-color:var(--ember);color:#1a0e04;font-weight:500}
+button:focus-visible,label.btn:focus-within,input:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
+input[type=file]{position:absolute;opacity:0;width:1px;height:1px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px;display:grid;gap:14px}
+.meters{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px}
+.meter small{display:block;font:500 .68rem var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--mute)}
+.meter output{font:500 1.25rem var(--mono);font-variant-numeric:tabular-nums}
+.bar{height:5px;background:var(--line);border-radius:3px;margin-top:6px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--ember);transition:width .15s}
+.ctl{display:grid;gap:6px}
+.ctl label{display:flex;justify-content:space-between;font:500 .75rem var(--mono);color:var(--mute);letter-spacing:.06em;text-transform:uppercase}
+input[type=range]{width:100%;accent-color:var(--ember)}
+.check{display:flex;align-items:center;gap:8px;font-size:.9rem}
+ul{list-style:none;margin:0;padding:0;font:400 .8rem var(--mono);color:var(--mute);display:grid;gap:4px;max-height:130px;overflow:auto}
+ul li b{color:var(--ember);font-weight:500}
+.note{font-size:.82rem;color:var(--mute);margin:0}
+.note strong{color:var(--text);font-weight:500}
+.msg{font-size:.85rem;color:var(--ember);margin:0}
+@media (prefers-reduced-motion:reduce){.chip.alarm{animation:none}}
+</style>
+
+<main>
+  <header>
+    <div>
+      <h1>Pantau <span>Api</span></h1>
+      <p class="sub">Arahkan kamera ke korek, lilin, atau nyala api lain. Peringatan muncul saat nyala terdeteksi.</p>
+    </div>
+    <span id="status" class="chip" role="status" aria-live="polite">Belum aktif</span>
+  </header>
+
+  <div id="stage" class="stage">
+    <video id="vid" playsinline muted hidden></video>
+    <img id="photo" alt="Foto yang dianalisis" hidden>
+    <canvas id="ov"></canvas>
+    <div id="empty" class="empty"><div><b>Kamera belum menyala</b>Tekan "Mulai kamera", atau ambil foto/video lewat tombol di bawah.</div></div>
+  </div>
+
+  <div class="row">
+    <button id="start" class="primary" type="button">Mulai kamera</button>
+    <button id="flip" type="button" hidden>Ganti kamera</button>
+    <button id="stop" type="button" hidden>Berhenti</button>
+    <label class="btn">Foto / video dari perangkat<input id="file" type="file" accept="video/*,image/*"></label>
+  </div>
+  <p id="msg" class="msg" hidden></p>
+
+  <section class="panel" aria-label="Bacaan sensor">
+    <div class="meters">
+      <div class="meter"><small>Luas nyala</small><output id="mArea">0.00%</output><div class="bar"><i id="bArea"></i></div></div>
+      <div class="meter"><small>Kedipan</small><output id="mFlick">0%</output><div class="bar"><i id="bFlick"></i></div></div>
+      <div class="meter"><small>Keyakinan</small><output id="mConf">0%</output><div class="bar"><i id="bConf"></i></div></div>
+    </div>
+    <div class="ctl">
+      <label for="sens"><span>Kepekaan</span><span id="sensV">5</span></label>
+      <input id="sens" type="range" min="1" max="10" value="5">
+    </div>
+    <div class="check"><input id="snd" type="checkbox" checked><label for="snd">Bunyi alarm dan getar</label></div>
+    <ul id="log" aria-label="Riwayat deteksi"></ul>
+  </section>
+
+  <p class="note"><strong>Perlu diketahui:</strong> kamera HP dan laptop biasa tidak membaca suhu. Web ini mengenali api dari warna oranye-kuning yang terang, bentuknya, dan kedipan nyalanya. Ini alat bantu, bukan pengganti alarm asap. Lampu oranye yang bergoyang atau matahari terbenam bisa memicu peringatan palsu, jadi turunkan kepekaan bila terlalu sering bunyi.</p>
+</main>
+
+<script>
+(function(){
+  var $=function(id){return document.getElementById(id)};
+  var vid=$('vid'),photo=$('photo'),ov=$('ov'),stage=$('stage'),empty=$('empty'),statusEl=$('status'),msg=$('msg');
+  var work=document.createElement('canvas'),wctx=work.getContext('2d',{willReadFrequently:true});
+  var octx=ov.getContext('2d');
+  var stream=null,facing='environment',running=false,mode='none',lastT=0,objUrl=null;
+  var W=160,H=120,prev=null,flickEma=0,hits=0,miss=0,alarmOn=false,audioCtx=null,lastBeep=0,lastBox=null;
+
+  function say(t){msg.hidden=!t;msg.textContent=t||''}
+  function setStatus(txt,cls){statusEl.textContent=txt;statusEl.className='chip'+(cls?' '+cls:'')}
+  function log(t){var li=document.createElement('li');var d=new Date();li.innerHTML='<b>'+d.toLocaleTimeString('id-ID')+'</b> '+t;var ul=$('log');ul.insertBefore(li,ul.firstChild);while(ul.children.length>30)ul.removeChild(ul.lastChild)}
+
+  function sizeOverlay(){var r=stage.getBoundingClientRect(),dpr=window.devicePixelRatio||1;ov.width=Math.round(r.width*dpr);ov.height=Math.round(r.height*dpr)}
+  window.addEventListener('resize',sizeOverlay);sizeOverlay();
+
+  function thresholds(){
+    var s=+$('sens').value; // 1 rendah .. 10 tinggi
+    return {vmin:0.93-s*0.02, smin:0.62-s*0.03, area:0.0035-s*0.00024, flick:0.16-s*0.012};
+  }
+
+  function isFlame(r,g,b,t){
+    var mx=r>g?(r>b?r:b):(g>b?g:b), mn=r<g?(r<b?r:b):(g<b?g:b);
+    if(mx<255*t.vmin)return false;
+    if(!(r>=g&&g>=b))return false;
+    var d=mx-mn,s=d/mx;
+    var h=60*((g-b)/d); // r adalah maks
+    if(h<0)h+=360;
+    // inti nyala putih-kuning: sangat terang, sedikit jenuh
+    if(r>238&&g>205&&b>120&&h>=30&&h<=62)return true;
+    return s>=t.smin&&h>=8&&h<=58&&g>b+20;
+  }
+
+  function analyze(src,sw,sh,useFlicker){
+    var t=thresholds();
+    var ratio=sh/sw;H=Math.max(48,Math.round(W*ratio));
+    if(work.width!==W||work.height!==H){work.width=W;work.height=H;prev=null}
+    wctx.drawImage(src,0,0,W,H);
+    var px=wctx.getImageData(0,0,W,H).data,n=W*H,mask=new Uint8Array(n),cand=0,tog=0,x0=W,y0=H,x1=-1,y1=-1;
+    for(var i=0,p=0;i<n;i++,p+=4){
+      if(isFlame(px[p],px[p+1],px[p+2],t)){
+        mask[i]=1;cand++;
+        var x=i%W,y=(i/W)|0;
+        if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;
+      }
+      if(prev&&mask[i]!==prev[i])tog++;
+    }
+    prev=mask;
+    var area=cand/n;
+    var flick=useFlicker&&cand>0?Math.min(1,tog/(cand*1.2)):0;
+    flickEma=useFlicker?flickEma*0.7+flick*0.3:0;
+    var areaOk=area>=t.area&&area<0.35; // api sangat besar di layar biasanya bukan nyala nyata
+    var flickOk=useFlicker?flickEma>=t.flick:true;
+    var hit=areaOk&&flickOk;
+    var conf=Math.min(1,(area/(t.area*4))*0.5+(useFlicker?Math.min(1,flickEma/(t.flick*3))*0.5:0.5));
+    return {area:area,flick:flickEma,conf:hit?conf:conf*0.5,hit:hit,box:cand>0?[x0,y0,x1,y1]:null};
+  }
+
+  function draw(res,sw,sh){
+    var cw=ov.width,ch=ov.height;octx.clearRect(0,0,cw,ch);
+    if(!res.hit||!res.box)return;
+    var sc=Math.min(cw/sw,ch/sh),ox=(cw-sw*sc)/2,oy=(ch-sh*sc)/2,k=sw/W,b=res.box;
+    var x=ox+b[0]*k*sc,y=oy+b[1]*k*(sh/H)*sc,w=(b[2]-b[0]+1)*k*sc,h=(b[3]-b[1]+1)*k*(sh/H)*sc;
+    var pad=10*(window.devicePixelRatio||1);
+    octx.lineWidth=3*(window.devicePixelRatio||1);
+    octx.strokeStyle=alarmOn?'#ff4d4d':'#ff8a3d';
+    octx.strokeRect(x-pad,y-pad,w+pad*2,h+pad*2);
+    octx.fillStyle=octx.strokeStyle;
+    octx.font=(12*(window.devicePixelRatio||1))+'px "IBM Plex Mono",monospace';
+    octx.fillText('API '+Math.round(res.conf*100)+'%',x-pad,Math.max(14,y-pad-6));
+  }
+
+  function beep(){
+    if(!$('snd').checked)return;
+    var now=Date.now();if(now-lastBeep<900)return;lastBeep=now;
+    try{
+      audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
+      var o=audioCtx.createOscillator(),g=audioCtx.createGain();
+      o.type='square';o.frequency.value=880;g.gain.value=0.15;o.connect(g);g.connect(audioCtx.destination);
+      o.start();o.stop(audioCtx.currentTime+0.35);
+    }catch(e){}
+    try{if(navigator.vibrate)navigator.vibrate([200,100,200])}catch(e){}
+  }
+
+  function show(res){
+    $('mArea').textContent=(res.area*100).toFixed(2)+'%';
+    $('mFlick').textContent=Math.round(res.flick*100)+'%';
+    $('mConf').textContent=Math.round(res.conf*100)+'%';
+    $('bArea').style.width=Math.min(100,res.area*100*12)+'%';
+    $('bFlick').style.width=Math.round(res.flick*100)+'%';
+    $('bConf').style.width=Math.round(res.conf*100)+'%';
+  }
+
+  function decide(res){
+    if(res.hit){hits++;miss=0}else{miss++;if(miss>3)hits=0}
+    var was=alarmOn;
+    if(!alarmOn&&hits>=5)alarmOn=true;
+    if(alarmOn&&miss>=14){alarmOn=false;hits=0}
+    stage.classList.toggle('alarm',alarmOn);
+    if(alarmOn){setStatus('Api terdeteksi','alarm');beep()}
+    else if(res.hit)setStatus('Memeriksa…','');
+    else setStatus('Aman','safe');
+    if(alarmOn&&!was)log('Api terdeteksi, keyakinan '+Math.round(res.conf*100)+'%');
+    if(!alarmOn&&was)log('Api tidak terlihat lagi');
+  }
+
+  function loop(ts){
+    if(!running)return;
+    requestAnimationFrame(loop);
+    if(ts-lastT<66)return; // sekitar 15 gambar per detik
+    lastT=ts;
+    if(vid.readyState<2||!vid.videoWidth)return;
+    var res=analyze(vid,vid.videoWidth,vid.videoHeight,true);
+    decide(res);show(res);draw(res,vid.videoWidth,vid.videoHeight);
+  }
+
+  function reset(){prev=null;flickEma=0;hits=0;miss=0;alarmOn=false;stage.classList.remove('alarm');octx.clearRect(0,0,ov.width,ov.height)}
+
+  function halt(){
+    running=false;
+    if(stream){stream.getTracks().forEach(function(t){t.stop()});stream=null}
+    vid.pause();vid.srcObject=null;vid.removeAttribute('src');
+    if(objUrl){URL.revokeObjectURL(objUrl);objUrl=null}
+    vid.hidden=true;photo.hidden=true;empty.hidden=false;
+    $('stop').hidden=true;$('flip').hidden=true;$('start').hidden=false;
+    reset();setStatus('Belum aktif','');mode='none';
+  }
+
+  function startCamera(){
+    say('');
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+      say('Halaman ini tidak diizinkan memakai kamera langsung. Pakai tombol "Foto / video dari perangkat", atau buka file ini lewat alamat https atau langsung dari penyimpanan perangkat.');return;
+    }
+    halt();
+    navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facing},width:{ideal:1280},height:{ideal:720}},audio:false}).then(function(s){
+      stream=s;vid.srcObject=s;vid.hidden=false;empty.hidden=true;mode='live';
+      return vid.play();
+    }).then(function(){
+      running=true;reset();sizeOverlay();
+      $('start').hidden=true;$('stop').hidden=false;$('flip').hidden=false;
+      setStatus('Memeriksa…','');log('Kamera menyala');requestAnimationFrame(loop);
+    }).catch(function(e){
+      halt();
+      var n=e&&e.name;
+      say(n==='NotAllowedError'?'Izin kamera ditolak. Aktifkan izin kamera untuk halaman ini di pengaturan browser, lalu coba lagi.':
+          n==='NotFoundError'?'Kamera tidak ditemukan di perangkat ini.':
+          'Kamera tidak bisa dibuka. Coba tombol "Foto / video dari perangkat".');
+    });
+  }
+
+  $('start').addEventListener('click',startCamera);
+  $('stop').addEventListener('click',function(){halt();log('Dihentikan')});
+  $('flip').addEventListener('click',function(){facing=facing==='environment'?'user':'environment';startCamera()});
+  $('sens').addEventListener('input',function(){$('sensV').textContent=this.value});
+
+  $('file').addEventListener('change',function(){
+    var f=this.files&&this.files[0];if(!f)return;
+    say('');halt();
+    objUrl=URL.createObjectURL(f);empty.hidden=true;reset();sizeOverlay();
+    if(f.type.indexOf('image/')===0){
+      mode='photo';photo.hidden=false;
+      photo.onload=function(){
+        var res=analyze(photo,photo.naturalWidth,photo.naturalHeight,false);
+        // satu foto tidak punya kedipan, jadi hanya warna dan luas yang dinilai
+        alarmOn=res.hit;stage.classList.toggle('alarm',alarmOn);
+        setStatus(res.hit?'Api terdeteksi':'Tidak ada api',res.hit?'alarm':'safe');
+        show(res);draw(res,photo.naturalWidth,photo.naturalHeight);
+        log('Foto diperiksa: '+(res.hit?'ada nyala api':'tidak ada nyala api'));
+        say('Foto tidak punya data kedipan, jadi hasilnya kurang pasti dibanding kamera langsung.');
+      };
+      photo.src=objUrl;
+    }else{
+      mode='file';vid.hidden=false;vid.srcObject=null;vid.src=objUrl;vid.loop=true;
+      vid.play().then(function(){running=true;$('stop').hidden=false;$('start').hidden=true;setStatus('Memeriksa…','');log('Memeriksa video');requestAnimationFrame(loop)}).catch(function(){say('Video tidak bisa diputar di browser ini.')});
+    }
+    this.value='';
+  });
+
+  document.addEventListener('visibilitychange',function(){if(document.hidden&&mode==='live'){}});
+})();
+</script>
+
+</body></html>
